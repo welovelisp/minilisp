@@ -6,6 +6,9 @@
 #include <ctype.h>
 #include <sys/mman.h>
 
+#include <readline/readline.h>
+#include <readline/history.h>
+
 enum {
     TFREE,
     TINT,
@@ -97,10 +100,10 @@ static Obj *True;
 static ObjectSpace memory;
 static Obj *free_list;
 static int gc_running = 0;
-#define DEBUG_GC 1
+#define DEBUG_GC 0
 
 void error(char *fmt, ...);
-Obj *read(Env *env, Obj *root, char **p);
+static Obj *read(Env *env, Obj *root, char **p);
 Obj *read_one(Env *env, Obj *root, char **p);
 Obj *make_cell(Env *env, Obj *root, Obj **car, Obj **cdr);
 void gc(Env *env, Obj *root);
@@ -305,14 +308,12 @@ void sweep(Env *env, Obj *root)
 }
 
 void gc(Env *env, Obj *root) {
-    printf("gc start\n");
     if (gc_running)
         error("Bug: GC is already running");
     gc_running = 1;
     mark(env, root);
     sweep(env, root);
     gc_running = 0;
-    printf("gc end\n");
 }
 
 void error(char *fmt, ...) {
@@ -423,7 +424,7 @@ Obj *read_one(Env *env, Obj *root, char **p) {
     }
 }
 
-Obj *read(Env *env, Obj *root, char **p) {
+static Obj *read(Env *env, Obj *root, char **p) {
     for (;;) {
         char c = **p;
         (*p)++;
@@ -644,9 +645,14 @@ Obj *eval(Env *env, Obj *root, Obj **obj) {
         *car = (*obj)->car;
         *args = (*obj)->cdr;
         *fn = eval(env, root, car);
-        if ((*fn)->type != TPRIMITIVE && (*fn)->type != TFUNCTION)
+	if ((*fn)->type == TMACRO) {
+	    VAR(macro);
+	    *macro = macroexpand(env, root, obj);
+	    return eval(env, root, macro);
+	}else if ((*fn)->type != TPRIMITIVE && (*fn)->type != TFUNCTION){
             error("Car must be a function");
-        return apply(env, root, fn, args);
+	}else
+	    return apply(env, root, fn, args);
     }
     if ((*obj)->type == TSYMBOL) {
         Obj *val = find((*obj)->name, env);
@@ -675,6 +681,20 @@ Obj *prim_car(Env *env, Obj *root, Obj **list) {
     if (args->car->type != TCELL)
         error("car takes only a cell");
     return args->car->car;
+}
+
+Obj *prim_cdr(Env *env, Obj *root, Obj **list)
+{
+    VAR(args);
+    *args = eval_list(env, root, list);
+    return (*args)->car->cdr;
+}
+
+Obj *prim_cons(Env *env, Obj *root, Obj **list)
+{
+    VAR(args);
+    *args = eval_list(env, root, list);
+    return make_cell(env, root, &(*args)->car, &(*args)->cdr->car);
 }
 
 Obj *prim_setq(Env *env, Obj *root, Obj **list) {
@@ -823,6 +843,17 @@ Obj *prim_num_eq(Env *env, Obj *root, Obj **list) {
     return (*values)->car->value == (*values)->cdr->car->value ? True : Nil;
 }
 
+Obj *prim_num_lt(Env *env, Obj *root, Obj **list)
+{
+    if (list_length(*list) != 2)
+        error("malformed <");
+    VAR(values);
+    *values = eval_list(env, root, list);
+    if ((*values)->car->type != TINT || (*values)->cdr->car->type != TINT)
+        error("< only takes number");
+    return (*values)->car->value < (*values)->cdr->car->value ? True : Nil;
+}
+
 Obj *prim_gc(Env *env, Obj *root, Obj **list) {
     gc(env, root);
     return Nil;
@@ -854,6 +885,8 @@ void define_primitives(Env *env, Obj *root) {
     add_primitive(env, root, "quote", prim_quote);
     add_primitive(env, root, "list", prim_list);
     add_primitive(env, root, "car", prim_car);
+    add_primitive(env, root, "cdr", prim_cdr);
+    add_primitive(env, root, "cons", prim_cons);
     add_primitive(env, root, "setq", prim_setq);
     add_primitive(env, root, "+", prim_plus);
     add_primitive(env, root, "negate", prim_negate);
@@ -864,6 +897,7 @@ void define_primitives(Env *env, Obj *root) {
     add_primitive(env, root, "lambda", prim_lambda);
     add_primitive(env, root, "if", prim_if);
     add_primitive(env, root, "=", prim_num_eq);
+    add_primitive(env, root, "prim-lt", prim_num_lt);
     add_primitive(env, root, "println", prim_println);
     add_primitive(env, root, "gc", prim_gc);
     add_primitive(env, root, "exit", prim_exit);
@@ -898,17 +932,19 @@ Obj *alloc_heap(size_t size)
     return heap->ptr;
 }
 
-static char buf[BUFSIZE * 100]; /* 100 lines of lisp code */
-
 void do_repl(Env *env, Obj *root)
 {
     VAR(sexp);
     VAR(expanded);
 
     for (;;) {
-        char *p = buf;
-        char *dummy = fgets(p, BUFSIZE, stdin);
+        char *line = readline("minilisp> ");
+        char *p = line;
+
+        if (!line) break;
         *sexp = read(env, root, &p);
+        add_history(line);
+        free(line);
         if (!*sexp) continue;
         *expanded = macroexpand(env, root, sexp);
         print(eval(env, root, expanded));
@@ -918,6 +954,8 @@ void do_repl(Env *env, Obj *root)
 
 void eval_file(Env *env, Obj *root, char *fname)
 {
+    static char buf[BUFSIZE * 100]; /* about 100 lines of lisp code */
+
     FILE *fp = fopen(fname, "r");
     if (!fp) error("no such file");
 
