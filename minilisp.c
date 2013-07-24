@@ -105,8 +105,6 @@ typedef enum Immediate {
 } Immediate;
 
 typedef struct Object {
-  int dummy1;
-  struct ObjectHeap *heap;
   union {
     // Free Object
     struct {
@@ -125,6 +123,7 @@ typedef struct Object {
           int value;
         } immediate;
         struct {
+        // TODO
         } vector;
         struct {
           char *value;
@@ -168,7 +167,7 @@ typedef unsigned char Octet;
 
 typedef struct ObjectHeap {
     Octet *marks;
-    Octet *vectors;
+    Octet *external;
     Object *ptr;
 } ObjectHeap;
 
@@ -204,9 +203,9 @@ Object *alloc_heap(size_t size);
 #define VAR(X)                                          \
   Object VAR_CELL(X);                                   \
   VALUE  VAR_VAL(X) = VALUE_OF(&(VAR_CELL(X)), T_CELL); \
-  OBJECT(VAR_VAL(X))->dummy1 = NULL; /* TODO delete*/   \
+  OBJECT(VAR_VAL(X))->dummy1 = 0; /* TODO delete*/   \
   OBJECT(VAR_VAL(X))->heap = NULL;   /* TODO delete*/   \
-  CAR(VAR_VAL(X)) = NULL;                               \
+  CAR(VAR_VAL(X)) = 0;                               \
   CDR(VAR_VAL(X)) = root;                               \
   root = VAR_VAL(X);                                    \
   VALUE* X = &(CAR(VAR_VAL(X)))
@@ -254,6 +253,7 @@ VALUE make_string(Env *env, VALUE root, char *body) {
     */
   VALUE value = alloc(env, root, T_STRING);
   STRING(value) = body;
+  MARK_EXTERNAL(value);
   return value;
 }
 
@@ -280,6 +280,7 @@ VALUE make_symbol(Env *env, VALUE root, char *name) {
     */
   VALUE value = alloc(env, root, T_SYMBOL);
   SYMBOL(value) = name;
+  MARK_EXTERNAL(value);
   return value;
 }
 
@@ -346,11 +347,15 @@ void print_cframe(VALUE root) {
 }
 */
 
-// TODO value対応
 #define HEAP_OF(obj)     (OBJECT(obj)->heap)
 #define POS_IN_HEAP(obj) (OBJECT(obj) - HEAP_OF(obj)->ptr)
 #define MARK(obj)        (HEAP_OF(obj)->marks[POS_IN_HEAP(obj) >> 3] |= 1 << (POS_IN_HEAP(obj) & 7))
 #define MARKED(obj)      (HEAP_OF(obj)->marks[POS_IN_HEAP(obj) >> 3] & (1 << (POS_IN_HEAP(obj) & 7)))
+#define MARK_EXTERNAL(obj)   (HEAP_OF(obj)->external[POS_IN_HEAP(obj) >> 3] |= 1 << (POS_IN_HEAP(obj) & 7))
+#define MARKED_EXTERNAL(obj) (HEAP_OF(obj)->external[POS_IN_HEAP(obj) >> 3] & (1 << (POS_IN_HEAP(obj) & 7)))
+#define RESET_EXTERNAL(obj)  (HEAP_OF(obj)->external[POS_IN_HEAP(obj) >> 3] & (1 << (POS_IN_HEAP(obj) & 7)))/* TODO */
+
+
 
 void mark_obj(VALUE obj)
 {
@@ -453,13 +458,9 @@ void sweep_obj(VALUE obj)
     free_list = obj;
     */
 
-  switch (TYPE(obj)) {
-    case T_STRING:
-      free(STRING(obj));
-      break;
-    case T_SYMBOL:
-      free(SYMBOL(obj));
-      break;
+  if (MARKED_EXTERNAL(obj)) {
+    RESET_EXTERNAL(obj);
+    free(STRING(obj));
   }
   Object *object = OBJECT(obj);
   object->as.free.next = free_list;
@@ -475,7 +476,7 @@ void sweep(Env *env, VALUE root)
         int j;
         for (j = 0; j < MEMORY_SIZE / sizeof(Obj); j++) {
             if (!(heap->marks[j >> 3] & (1 << (j & 7)))) {
-                sweep_obj(&heap->ptr[j]);
+                sweep_obj(VALUE_OF(&heap->ptr[j], T_CELL));
             }
         }
     }
@@ -509,23 +510,26 @@ VALUE read_sexp(Env *env, VALUE root, char **p) {
         if (!*obj)
             error("unclosed parenthesis");
         if (*obj == Dot) {
-            if (*head == NULL)
+            if (*head == 0)
                 error("stray dot");
             *tmp = read_one(env, root, p);
-            (*tail)->cdr = *tmp;
+            //(*tail)->cdr = *tmp;
+            CDR(*tail) = *tmp;
             break;
         }
         if (*obj == Cparen) {
-            if (*head == NULL)
+            if (*head == 0)
                 return Nil;
             break;
         }
-        if (*head == NULL) {
-            (*head) = (*tail) = make_cell(env, root, obj, &Nil);
+        if (*head == 0) {
+            (*head) = (*tail) = make_cell(env, root, obj, &Nil); // TODO
         } else {
-            *tmp = make_cell(env, root, obj, &Nil);
-            (*tail)->cdr = *tmp;
-            (*tail) = (*tail)->cdr;
+            *tmp = make_cell(env, root, obj, &Nil); // TODO
+            //(*tail)->cdr = *tmp;
+            CDR(*tail) = *tmp;
+            //(*tail) = (*tail)->cdr;
+            (*tail) = CDR(*tail)
         }
     }
     return *head;
@@ -533,7 +537,8 @@ VALUE read_sexp(Env *env, VALUE root, char **p) {
 
 VALUE intern(Env *env, VALUE root, char *name) {
     VALUE old = find(name, env);
-    if (old) return old->car;
+    //if (old) return old->car;
+    if (old) return CAR(old);
     return make_symbol(env, root, name);
 }
 
