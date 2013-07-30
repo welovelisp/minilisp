@@ -212,16 +212,18 @@ void print_cframe(Obj *root) {
 
 #define bitsizeof(type)     (sizeof(type) * 8)
 
-#define BITMAP_CELL_OF(obj) ((Obj *) ((unsigned long) obj & ~(HEAP_SIZE - 1)))
+#define BITMAP_CELL_OF(obj) ((Obj *) ((unsigned long) obj & ~(HEAP_SIZE - 1))) // <- 3bit mask
 #define BITMAP_OF(obj)      (BITMAP_CELL_OF(obj)->bmap)
 #define HEAP_OF(obj)        (BITMAP_CELL_OF(obj)->heap)
 
-#define OBJECT_INDEX(obj)   (obj - HEAP_OF(obj))
+#define OBJECT_INDEX(obj)   (obj - HEAP_OF(obj)) // <- add cast
 #define BITMAP_INDEX(obj)   (OBJECT_INDEX(obj) / bitsizeof(int))
 #define BITMAP_OFFSET(obj)  (OBJECT_INDEX(obj) % bitsizeof(int))
 
 #define MARK(obj)   (BITMAP_OF(obj)[BITMAP_INDEX(obj)] |= 1 << BITMAP_OFFSET(obj))
 #define MARKED(obj) (BITMAP_OF(obj)[BITMAP_INDEX(obj)] & (1 << BITMAP_OFFSET(obj)))
+
+// bitmap:8KB  heapslot:512KB
 
 void mark_obj(Obj *obj)
 {
@@ -927,6 +929,9 @@ Obj *alloc_heap(void)
      */
     if (posix_memalign((void **) &heap, HEAP_SIZE, HEAP_SIZE) < 0) {
         return NULL;
+    }
+    else {
+        //assert(!(heap & (HEAP_SIZE - 1)));
     }
     memory.heaps[memory.len++] = heap;
 
