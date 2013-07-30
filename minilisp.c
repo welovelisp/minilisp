@@ -105,6 +105,8 @@ typedef enum Immediate {
 } Immediate;
 
 typedef struct Object {
+  int type; // TODO remove
+  struct ObjectHeap *heap; // TODO remove
   union {
     // Free Object
     struct {
@@ -203,7 +205,7 @@ Object *alloc_heap(size_t size);
 #define VAR(X)                                          \
   Object VAR_CELL(X);                                   \
   VALUE  VAR_VAL(X) = VALUE_OF(&(VAR_CELL(X)), T_CELL); \
-  OBJECT(VAR_VAL(X))->dummy1 = 0; /* TODO delete*/   \
+  OBJECT(VAR_VAL(X))->type = 0; /* TODO delete*/   \
   OBJECT(VAR_VAL(X))->heap = NULL;   /* TODO delete*/   \
   CAR(VAR_VAL(X)) = 0;                               \
   CDR(VAR_VAL(X)) = root;                               \
@@ -523,13 +525,13 @@ VALUE read_sexp(Env *env, VALUE root, char **p) {
             break;
         }
         if (*head == 0) {
-            (*head) = (*tail) = make_cell(env, root, obj, &Nil); // TODO
+            (*head) = (*tail) = make_cell(env, root, *obj, Nil); // TODO obj -> *objしたけど大丈夫？
         } else {
-            *tmp = make_cell(env, root, obj, &Nil); // TODO
+            *tmp = make_cell(env, root, *obj, Nil); // TODO
             //(*tail)->cdr = *tmp;
             CDR(*tail) = *tmp;
             //(*tail) = (*tail)->cdr;
-            (*tail) = CDR(*tail)
+            (*tail) = CDR(*tail);
         }
     }
     return *head;
@@ -547,8 +549,8 @@ VALUE read_quote(Env *env, VALUE root, char **p) {
     VAR(tmp);
     *sym = intern(env, root, "quote");
     *tmp = read(env, root, p);
-    *tmp = make_cell(env, root, tmp, &Nil);
-    *tmp = make_cell(env, root, sym, tmp);
+    *tmp = make_cell(env, root, *tmp, Nil);
+    *tmp = make_cell(env, root, *sym, *tmp);
     return *tmp;
 }
 
@@ -608,7 +610,7 @@ static VALUE read(Env *env, VALUE root, char **p) {
         char c = **p;
         (*p)++;
         if (c == '\0')
-            return NULL;
+            return (VALUE) NULL;
         if (c == ' ' || c == '\n' || c == '\r' || c == '\t')
             continue;
         if (c == '(')
@@ -626,6 +628,43 @@ static VALUE read(Env *env, VALUE root, char **p) {
 }
 
 void print(VALUE obj) {
+  switch (TYPE(obj)) {
+  case T_CELL:
+    printf("(");
+    for (;;) {
+      print(CAR(obj));
+      if (CDR(obj) == Nil) {
+        break;
+      }
+      if (TYPE(CDR(obj)) == T_CELL && !DEBUG_GC) {
+        printf(" ");
+        obj = CDR(obj);
+        continue;
+      }
+      printf(" . ");
+      print(CDR(obj));
+      break;
+    }
+    printf(")");
+    return;
+  case T_FIXNUM:
+    printf("%d", FIXNUM(obj));
+    return;
+  case T_ATOM:
+    switch (ATOM_TYPE(obj)) {
+    case T_IMMEDIATE:
+    case T_STRING:
+      printf("%s", STRING(obj));
+      return;
+    case T_SYMBOL:
+    case T_PRIMITIVE:
+    case T_VECTOR:
+    }
+    return;
+  case T_FUNCTION:
+  case T_MACRO:
+  }
+
     switch (obj->type) {
     case TINT:
         printf("%d", obj->value);
