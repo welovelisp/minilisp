@@ -874,6 +874,14 @@ Obj *prim_exit(Env *env, Obj *root, Obj **list) {
     exit(0);
 }
 
+Obj *prim_consp(Env *env, Obj *root, Obj **list)
+{
+    VAR(tmp);
+    *tmp = (*list)->car;
+    *tmp = eval(env, root, tmp);
+    return (*tmp)->type == TCELL ? True : Nil;
+}
+
 void add_var(Env *env, Obj *root, char *name, Obj **var) {
     VAR(sym);
     VAR(cell);
@@ -912,6 +920,7 @@ void define_primitives(Env *env, Obj *root) {
     add_primitive(env, root, "println", prim_println);
     add_primitive(env, root, "gc", prim_gc);
     add_primitive(env, root, "exit", prim_exit);
+    add_primitive(env, root, "consp", prim_consp);
 }
 
 Obj *alloc_heap(void)
